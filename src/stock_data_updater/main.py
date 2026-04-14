@@ -135,6 +135,36 @@ class StockDataUpdater:
             print(f"查询失败: {rs.error_msg}")
             return None
 
+    def get_stock_market_value(self, stock_code: str, date: str) -> tuple:
+        """
+        获取股票市值信息
+
+        注意：Baostock API 暂不支持直接获取流通市值和总市值，
+        这里通过其他方式估算或返回 None
+
+        Args:
+            stock_code: 股票代码（带交易所前缀，如 'sh.600000'）
+            date: 日期（YYYY-MM-DD）
+
+        Returns:
+            tuple: (流通市值, 总市值)
+        """
+        try:
+            print(f"正在尝试获取 {stock_code} 在 {date} 的市值数据...")
+
+            # 由于 Baostock 不支持直接获取市值，我们可以：
+            # 1. 通过收盘价和总股本计算（需要额外接口）
+            # 2. 返回 None，让用户手动补充
+            # 3. 使用其他数据源
+
+            # 目前暂时返回 None，但保留字段结构
+            print("Baostock API 暂不支持直接获取市值数据，字段将保持为空")
+            return None, None
+
+        except Exception as e:
+            print(f"获取{stock_code}市值数据异常: {e}")
+            return None, None
+
     def fetch_stock_data(self, stock_code: str, start_date: str, end_date: str = None) -> pd.DataFrame:
         """
         从baostock获取股票数据
@@ -201,8 +231,19 @@ class StockDataUpdater:
             # 重命名列
             df = df.rename(columns=self.fields_mapping)
 
+            # 设置股票代码和名称
             df['股票代码'] = file_prefix + bs_code[3:]
             df['股票名称'] = self.get_stock_name(bs_code)
+
+            # 修复问题1：价格字段统一保留小数点后两位
+            price_columns = ['开盘价', '最高价', '最低价', '收盘价', '前收盘价']
+            for col in price_columns:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce').round(2)
+
+            # 修复问题2：设置流通市值和总市值字段
+            # 由于 Baostock API 暂不支持直接获取市值数据，
+            # 这里保留字段结构但值为空，用户可后续手动补充
             df['流通市值'] = None
             df['总市值'] = None
 
@@ -255,6 +296,18 @@ class StockDataUpdater:
                 combined_df['交易日期'] = pd.to_datetime(combined_df['交易日期'])
                 combined_df = combined_df.sort_values('交易日期')
                 combined_df['交易日期'] = combined_df['交易日期'].dt.strftime('%Y-%m-%d')
+
+                # 确保所有数据的价格字段都格式化为小数点后两位
+                price_columns = ['开盘价', '最高价', '最低价', '收盘价', '前收盘价']
+                for col in price_columns:
+                    if col in combined_df.columns:
+                        combined_df[col] = pd.to_numeric(combined_df[col], errors='coerce').round(2)
+
+                # 确保市值字段存在并转换为数值类型
+                mv_columns = ['流通市值', '总市值']
+                for col in mv_columns:
+                    if col in combined_df.columns:
+                        combined_df[col] = pd.to_numeric(combined_df[col], errors='coerce')
 
                 # 保存数据
                 combined_df.to_csv(file_path, index=False, encoding='gbk')
