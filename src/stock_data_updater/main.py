@@ -323,9 +323,42 @@ class StockDataUpdater:
 
         print(f"现有股票更新完成，共更新{updated_count}只股票")
 
+    def get_all_a_share_stocks(self) -> List[str]:
+        """
+        从baostock获取所有沪深A股股票代码
+
+        Returns:
+            List: 沪深A股股票代码列表（不带交易所前缀，如 '600000', '000001'）
+        """
+        try:
+            print("正在从Baostock获取沪深A股股票列表...")
+            rs = bs.query_stock_basic(code='', code_name='')
+
+            if rs.error_code != '0':
+                print(f"获取股票列表失败: {rs.error_msg}")
+                return []
+
+            a_stocks = []
+            while (rs.error_code == '0') & rs.next():
+                data = rs.get_row_data()
+                if data:
+                    code = data[0]  # 格式: sh.600000 或 sz.000001
+                    # 筛选沪深A股：上证A股(6开头)、深证A股(0或3开头)
+                    if code.startswith('sh.6') or code.startswith('sz.0') or code.startswith('sz.3'):
+                        # 去掉交易所前缀，只保留股票代码
+                        stock_code = code[3:]
+                        a_stocks.append(stock_code)
+
+            print(f"成功获取 {len(a_stocks)} 只沪深A股股票")
+            return a_stocks
+
+        except Exception as e:
+            print(f"获取沪深A股列表异常: {e}")
+            return []
+
     def find_new_stocks(self, existing_stocks: Dict[str, str]) -> List[str]:
         """
-        查找新股（简化版，实际使用时需要从baostock获取全量股票列表）
+        查找新股（从baostock获取全量股票列表并比较）
 
         Args:
             existing_stocks: 现有股票字典
@@ -333,10 +366,17 @@ class StockDataUpdater:
         Returns:
             List: 新股代码列表
         """
-        # 这里简化处理，实际应该从baostock获取所有股票列表进行比较
-        # 由于baostock没有直接提供全量股票列表的接口，这里返回空列表
-        # 在实际使用中，你可能需要维护一个股票代码列表
-        return []
+        # 获取所有沪深A股
+        all_stocks = self.get_all_a_share_stocks()
+
+        # 获取现有股票
+        existing_codes = set(existing_stocks.keys())
+
+        # 查找新股
+        new_stocks = [code for code in all_stocks if code not in existing_codes]
+
+        print(f"发现 {len(new_stocks)} 只新股")
+        return new_stocks
 
     def create_new_stock_file(self, stock_code: str, df: pd.DataFrame):
         """
@@ -351,7 +391,14 @@ class StockDataUpdater:
             return
 
         # 确定文件前缀
-        file_prefix = df.iloc[0]['文件前缀']
+        if stock_code.startswith('6'):
+            file_prefix = "sh"
+        elif stock_code.startswith('0') or stock_code.startswith('3'):
+            file_prefix = "sz"
+        else:
+            print(f"无法确定股票代码{stock_code}的交易所")
+            return
+
         filename = f"{file_prefix}{stock_code}.csv"
         file_path = os.path.join(self.data_dir, filename)
 

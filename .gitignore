@@ -41,6 +41,7 @@ venv.bak/
 # Data files (用户数据，不纳入版本控制)
 data/
 data_test/
+data_all/
 *.csv
 
 # Logs
