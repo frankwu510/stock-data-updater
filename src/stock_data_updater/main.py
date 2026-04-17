@@ -40,6 +40,13 @@ class StockDataUpdater:
             #"isST": "是否ST"
         }
 
+        # 定义统一的字段顺序
+        self.column_order = [
+            '股票代码', '股票名称', '交易日期', '开盘价', '最高价',
+            '最低价', '收盘价', '前收盘价', '成交量', '成交额',
+            '流通市值', '总市值'
+        ]
+
         # 确保数据目录存在
         os.makedirs(self.data_dir, exist_ok=True)
 
@@ -231,9 +238,20 @@ class StockDataUpdater:
             # 重命名列
             df = df.rename(columns=self.fields_mapping)
 
-            # 设置股票代码和名称
+            # 设置股票代码
             df['股票代码'] = file_prefix + bs_code[3:]
-            df['股票名称'] = self.get_stock_name(bs_code)
+
+            # 确保所有需要的列都存在
+            for col in self.column_order:
+                if col not in df.columns:
+                    df[col] = None
+
+            # 重新排列列顺序
+            df = df[self.column_order]
+
+            # 设置股票名称（从API获取）
+            stock_name = self.get_stock_name(bs_code)
+            df['股票名称'] = stock_name
 
             # 修复问题1：价格字段统一保留小数点后两位
             price_columns = ['开盘价', '最高价', '最低价', '收盘价', '前收盘价']
