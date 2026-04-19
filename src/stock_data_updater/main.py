@@ -3,7 +3,10 @@ import pandas as pd
 import baostock as bs
 import datetime
 import time
+import random
+import logging
 from typing import List, Tuple, Dict
+from functools import wraps
 
 
 class StockDataUpdater:
@@ -50,6 +53,94 @@ class StockDataUpdater:
         # 确保数据目录存在
         os.makedirs(self.data_dir, exist_ok=True)
 
+        # 配置日志
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s'
+        )
+        self.logger = logging.getLogger(__name__)
+
+        # 防IP封禁配置
+        self.request_delay = 0.5  # 基础延迟时间（秒）
+        self.max_retries = 3      # 最大重试次数
+        self.timeout = 30         # 请求超时时间（秒）
+
+        # 断点续传配置
+        self.progress_file = os.path.join(self.data_dir, "download_progress.json")
+        self.failed_file = os.path.join(self.data_dir, "failed_stocks.json")
+
+    @staticmethod
+    def anti_ip_block_decorator(func):
+        """
+        防IP封禁装饰器（静态方法）
+        提供重试机制、随机延迟和详细的日志记录
+        """
+        @wraps(func)
+        def wrapper(self, *args, **kwargs):
+            # 执行前延迟（随机延迟避免规律性请求）
+            delay = self.request_delay + random.uniform(0.1, 0.5)
+            self.logger.info(f"请求前延迟: {delay:.2f}秒")
+            time.sleep(delay)
+
+            # 重试机制
+            for attempt in range(self.max_retries + 1):
+                try:
+                    self.logger.info(f"开始执行 {func.__name__} (尝试 {attempt + 1}/{self.max_retries + 1})")
+                    result = func(self, *args, **kwargs)
+
+                    # 执行成功后延迟
+                    success_delay = self.request_delay + random.uniform(0.1, 0.3)
+                    self.logger.info(f"请求成功，执行后延迟: {success_delay:.2f}秒")
+                    time.sleep(success_delay)
+
+                    return result
+
+                except Exception as e:
+                    self.logger.error(f"第 {attempt + 1} 次尝试失败: {e}")
+
+                    if attempt < self.max_retries:
+                        # 计算重试延迟（指数退避）
+                        retry_delay = (2 ** attempt) * self.request_delay + random.uniform(0.5, 1.0)
+                        self.logger.info(f"等待 {retry_delay:.2f}秒后重试...")
+                        time.sleep(retry_delay)
+                    else:
+                        self.logger.error(f"所有重试均失败，放弃请求")
+                        raise e
+
+        return wrapper
+
+    @anti_ip_block_decorator
+    def get_stock_name(self, stock_code) -> str:
+        """
+        通过股票代码获取股票名称
+        :param stock_code: 股票代码，如 'sh.600000'
+        :return: 股票名称
+        """
+        try:
+            self.logger.info(f"查询股票名称: {stock_code}")
+            # 查询股票基本信息
+            rs = bs.query_stock_basic(code=stock_code)
+
+            if rs.error_code == '0':
+                # 获取查询结果
+                data_list = []
+                while (rs.error_code == '0') & rs.next():
+                    data_list.append(rs.get_row_data())
+
+            if data_list:
+                # 返回股票名称（在返回数据的第2个位置）
+                stock_name = data_list[0][1]
+                self.logger.info(f"成功获取股票名称: {stock_code} -> {stock_name}")
+                return stock_name
+            else:
+                self.logger.error(f"查询股票名称失败: {rs.error_msg}")
+                return None
+
+        except Exception as e:
+            self.logger.error(f"获取股票名称异常: {e}")
+            raise
+
+    @anti_ip_block_decorator
     def login_baostock(self) -> bool:
         """
         登录baostock
@@ -58,16 +149,25 @@ class StockDataUpdater:
             bool: 登录是否成功
         """
         try:
+            self.logger.info("正在登录baostock...")
             lg = bs.login()
             if lg.error_code == '0':
-                print("baostock登录成功")
+                self.logger.info("baostock登录成功")
                 return True
             else:
-                print(f"baostock登录失败: {lg.error_msg}")
+                self.logger.error(f"baostock登录失败: {lg.error_msg}")
                 return False
         except Exception as e:
-            print(f"登录异常: {e}")
-            return False
+            self.logger.error(f"登录异常: {e}")
+            raise
+
+    def logout_baostock(self):
+        """退出baostock"""
+        try:
+            bs.logout()
+            self.logger.info("baostock已退出")
+        except Exception as e:
+            self.logger.error(f"退出baostock时出错: {e}")
 
     def logout_baostock(self):
         """退出baostock"""
@@ -172,6 +272,7 @@ class StockDataUpdater:
             print(f"获取{stock_code}市值数据异常: {e}")
             return None, None
 
+    @anti_ip_block_decorator
     def fetch_stock_data(self, stock_code: str, start_date: str, end_date: str = None) -> pd.DataFrame:
         """
         从baostock获取股票数据
@@ -187,6 +288,8 @@ class StockDataUpdater:
         if end_date is None:
             end_date = datetime.datetime.now().strftime('%Y-%m-%d')
 
+        self.logger.info(f"获取股票数据: {stock_code} ({start_date} 到 {end_date})")
+
         # 确定交易所前缀
         if stock_code.startswith('6'):
             bs_code = f"sh.{stock_code}"
@@ -198,8 +301,9 @@ class StockDataUpdater:
         #    bs_code = f"bj.{stock_code}"
         #    file_prefix = "bj"
         else:
-            print(f"无法识别股票代码{stock_code}的交易所")
+            self.logger.error(f"无法识别股票代码{stock_code}的交易所")
             return pd.DataFrame()
+
         try:
             # 查询股票数据
             #rs = bs.query_history_k_data_plus(
@@ -221,7 +325,7 @@ class StockDataUpdater:
             )
 
             if rs.error_code != '0':
-                print(f"获取{stock_code}数据失败: {rs.error_msg}")
+                self.logger.error(f"获取{stock_code}数据失败: {rs.error_msg}")
                 return pd.DataFrame()
 
             data_list = []
@@ -229,7 +333,7 @@ class StockDataUpdater:
                 data_list.append(rs.get_row_data())
 
             if not data_list:
-                print(f"股票{stock_code}在{start_date}到{end_date}期间无数据")
+                self.logger.warning(f"股票{stock_code}在{start_date}到{end_date}期间无数据")
                 return pd.DataFrame()
 
             # 转换为DataFrame
@@ -250,8 +354,12 @@ class StockDataUpdater:
             df = df[self.column_order]
 
             # 设置股票名称（从API获取）
-            stock_name = self.get_stock_name(bs_code)
-            df['股票名称'] = stock_name
+            try:
+                stock_name = self.get_stock_name(bs_code)
+                df['股票名称'] = stock_name
+            except Exception as e:
+                self.logger.warning(f"获取股票名称失败 {bs_code}: {e}")
+                df['股票名称'] = None
 
             # 修复问题1：价格字段统一保留小数点后两位
             price_columns = ['开盘价', '最高价', '最低价', '收盘价', '前收盘价']
@@ -265,14 +373,13 @@ class StockDataUpdater:
             df['流通市值'] = None
             df['总市值'] = None
 
-            # 添加文件前缀信息
-            #df['文件前缀'] = file_prefix
+            self.logger.info(f"成功获取股票数据: {stock_code} ({len(df)} 条记录)")
 
             return df
 
         except Exception as e:
-            print(f"获取{stock_code}数据异常: {e}")
-            return pd.DataFrame()
+            self.logger.error(f"获取{stock_code}数据异常: {e}")
+            raise
 
     def update_existing_stocks(self, existing_stocks: Dict[str, str]):
         """
@@ -341,6 +448,7 @@ class StockDataUpdater:
 
         print(f"现有股票更新完成，共更新{updated_count}只股票")
 
+    @anti_ip_block_decorator
     def get_all_a_share_stocks(self) -> List[str]:
         """
         从baostock获取所有沪深A股股票代码
@@ -349,11 +457,11 @@ class StockDataUpdater:
             List: 沪深A股股票代码列表（不带交易所前缀，如 '600000', '000001'）
         """
         try:
-            print("正在从Baostock获取沪深A股股票列表...")
+            self.logger.info("正在从Baostock获取沪深A股股票列表...")
             rs = bs.query_stock_basic(code='', code_name='')
 
             if rs.error_code != '0':
-                print(f"获取股票列表失败: {rs.error_msg}")
+                self.logger.error(f"获取股票列表失败: {rs.error_msg}")
                 return []
 
             a_stocks = []
@@ -367,12 +475,12 @@ class StockDataUpdater:
                         stock_code = code[3:]
                         a_stocks.append(stock_code)
 
-            print(f"成功获取 {len(a_stocks)} 只沪深A股股票")
+            self.logger.info(f"成功获取 {len(a_stocks)} 只沪深A股股票")
             return a_stocks
 
         except Exception as e:
-            print(f"获取沪深A股列表异常: {e}")
-            return []
+            self.logger.error(f"获取沪深A股列表异常: {e}")
+            raise
 
     def find_new_stocks(self, existing_stocks: Dict[str, str]) -> List[str]:
         """

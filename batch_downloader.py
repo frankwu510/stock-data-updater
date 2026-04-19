@@ -12,11 +12,23 @@ import time
 import datetime
 import pandas as pd
 from typing import List, Optional
+import random
 
 # 添加 src 目录到 Python 路径
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
 from stock_data_updater import StockDataUpdater
+
+# 增强日志配置
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('batch_downloader.log', encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 
 class BatchStockDownloader:
