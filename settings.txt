@@ -1,0 +1,27 @@
+# 股票数据下载器配置文件
+
+# 数据源配置
+[DataSources]
+enable_baostock = true
+enable_akshare = true
+
+# 轮动配置 (用于规避IP封禁)
+[Rotation]
+baostock_time_limit = 60
+; baostock使用时间限制(秒)
+akshare_time_limit = 60
+; akshare使用时间限制(秒)
+delay_time = 1.0
+; 下载间隔时间(秒)
+
+# 下载配置
+[Download]
+start_date = 2000-01-01
+data_dir = data_all
+log_level = INFO
+
+# 断点续传
+[Resume]
+enable_resume = true
+progress_file = download_progress.json
+failed_file = failed_stocks.json
